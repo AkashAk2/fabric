@@ -28,7 +28,7 @@
     "mdsvex": "^0.11.2",
     "patch-package": "^8.0.0",
     "pdf-to-markdown-core": "github:jzillmann/pdf-to-markdown#modularize",
-    "pdfjs-dist": "^4.2.67",
+    "pdfjs-dist": "^4.10.38",
     "postcss": "^8.5.3",
     "postcss-load-config": "^6.0.1",
     "rehype-autolink-headings": "^7.1.0",
