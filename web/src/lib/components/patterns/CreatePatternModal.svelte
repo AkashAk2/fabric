@@ -41,7 +41,7 @@
         pattern: patternContent
       });
 
-      successMessage = 'Pattern created successfully! Closing modal...';
+      successMessage = 'Pattern created successfully! Closing the tab...';
 
       // Reset form
       name = '';
