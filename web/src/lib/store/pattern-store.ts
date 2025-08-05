@@ -79,15 +79,19 @@ export const patternAPI = {
 
   selectPattern(patternName: string) {
     const patterns = get(allPatterns);
+    console.log('Selecting pattern:', patternName);
     const selectedPattern = patterns.find(p => p.Name === patternName);
-
+    console.log('Selected pattern object:', selectedPattern);
     if (selectedPattern) {
+      console.log('Found pattern content (length: ' + selectedPattern.Pattern.length + '):', selectedPattern.Pattern);
       setSystemPrompt(selectedPattern.Pattern);
       selectedPatternName.set(patternName);
     } else {
+      console.log('No pattern found for name:', patternName);
       setSystemPrompt('');
       selectedPatternName.set('');
     }
+    console.log('System prompt store value after setting:', get(systemPrompt));
   },
 
   async createPattern(newPattern: {
