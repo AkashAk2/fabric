@@ -21,12 +21,30 @@ export const api = {
     });
 
     if (!response.ok) {
-      return { error: (await response.json() as APIErrorResponse).error || response.statusText };
+      // try to parse error JSON, fallback to status text if empty or invalid
+      let errorMessage = response.statusText;
+      try {
+        const errorJson = await response.json() as APIErrorResponse;
+        if (errorJson?.error) errorMessage = errorJson.error;
+      } catch {
+        // ignore JSON parse error for error responses
+      }
+      return { error: errorMessage };
     }
 
+    // Check content-length and content-type before parsing JSON
+    const contentLength = response.headers.get('content-length');
+    const contentType = response.headers.get('content-type');
+
+    if (contentLength === '0' || !contentType?.includes('application/json')) {
+      // No content or not JSON, return empty data
+      return { data: undefined };
+    }
+
+    // Safe to parse JSON now
     return { data: await response.json() as T };
   },
-
+  
   get: <T>(endpoint: string) => api.fetch<T>(endpoint),
   post: <T>(endpoint: string, data: unknown) => api.fetch<T>(endpoint, { method: 'POST', body: JSON.stringify(data) }),
   put: <T>(endpoint: string, data?: unknown) => api.fetch<T>(endpoint, { method: 'PUT', body: data ? JSON.stringify(data) : undefined }),
