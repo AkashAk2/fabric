@@ -161,8 +161,22 @@ async save(name: string, patternObj: Pattern) {
     // in a non-browser environment, fall back to the configured API URL.
     let url: string;
     if (typeof window !== 'undefined') {
-      // same-origin relative path -> will hit nginx on the public host
-      url = `/patterns/${encodeURIComponent(name)}`;
+      // Decide API host based on where the front-end is served:
+      // - If running on localhost, keep relative (dev proxy will handle it).
+      // - If running on a public host served by Vite (port 5173), the relative
+      //   path would hit the Vite server which doesn't proxy /patterns; instead
+      //   target the public origin (port 80) so nginx proxies to the backend.
+      const host = window.location.hostname;
+      const port = window.location.port;
+      if (host === 'localhost' || host === '127.0.0.1') {
+        url = `/patterns/${encodeURIComponent(name)}`;
+      } else if (port === '5173') {
+        // Use the public origin (no port) so nginx at port 80 forwards to backend
+        url = `${window.location.protocol}//${window.location.hostname}/patterns/${encodeURIComponent(name)}`;
+      } else {
+        // Default to same-origin relative path for production/static hosting
+        url = `/patterns/${encodeURIComponent(name)}`;
+      }
     } else {
       // server-side / build-time fallback: use configured fabricApiUrl
       let baseApi = config.fabricApiUrl.replace(/\/$/, '');
