@@ -155,13 +155,14 @@ export const patternAPI = {
 
 async save(name: string, patternObj: Pattern) {
   try {
-    const response = await fetch(`http://localhost:8080/patterns/${encodeURIComponent(name)}`, {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({ Pattern: patternObj.Pattern }),
-});
+    // Use the frontend dev-server proxy (/api) so requests are forwarded to the backend
+    const response = await fetch(`/api/patterns/${encodeURIComponent(name)}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ Pattern: patternObj.Pattern }),
+    });
 
 
     if (!response.ok) {

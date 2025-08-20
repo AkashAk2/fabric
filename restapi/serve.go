@@ -8,7 +8,10 @@ import (
 )
 
 func Serve(registry *core.PluginRegistry, address string, apiKey string) (err error) {
-	r := gin.New()
+		r := gin.New()
+
+		// Add CORS middleware before any routes
+		r.Use(CORSMiddleware())
 
 	// Middleware
 	r.Use(gin.Logger())

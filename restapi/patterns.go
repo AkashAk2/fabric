@@ -28,6 +28,11 @@ func NewPatternsHandler(r *gin.Engine, patterns *fsdb.PatternsEntity) (ret *Patt
 	r.POST("/patterns/:name", ret.Save)                     // From StorageHandler
 	// Add POST route for patterns with variables in request body
 	r.POST("/patterns/:name/apply", ret.ApplyPattern)
+
+	// Register OPTIONS handler for CORS preflight
+	r.OPTIONS("/patterns/:name", func(c *gin.Context) {
+		c.Status(204)
+	})
 	return
 }
 
