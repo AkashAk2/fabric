@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"os"
+
 	"github.com/gin-gonic/gin"
 )
 
