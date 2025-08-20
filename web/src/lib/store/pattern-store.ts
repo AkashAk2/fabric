@@ -2,6 +2,7 @@ import { createStorageAPI } from '$lib/api/base';
 import type { Pattern, PatternDescription } from '$lib/interfaces/pattern-interface';
 import { get, writable, derived } from 'svelte/store';
 import { languageStore } from './language-store';
+import { config } from '$lib/config/environment';
 
 // Store for all patterns
 const allPatterns = writable<Pattern[]>([]);
@@ -155,8 +156,10 @@ export const patternAPI = {
 
 async save(name: string, patternObj: Pattern) {
   try {
-    // Use the frontend dev-server proxy (/api) so requests are forwarded to the backend
-    const response = await fetch(`/api/patterns/${encodeURIComponent(name)}`, {
+  // Use configured Fabric API URL so production builds call the correct backend host
+  const baseApi = config.fabricApiUrl.replace(/\/$/, '');
+  const url = `${baseApi}/patterns/${encodeURIComponent(name)}`;
+  const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
