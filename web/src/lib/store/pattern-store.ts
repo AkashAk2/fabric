@@ -156,9 +156,27 @@ export const patternAPI = {
 
 async save(name: string, patternObj: Pattern) {
   try {
-  // Use configured Fabric API URL so production builds call the correct backend host
-  const baseApi = config.fabricApiUrl.replace(/\/$/, '');
-  const url = `${baseApi}/patterns/${encodeURIComponent(name)}`;
+    // Use configured Fabric API URL so production builds call the correct backend host
+    // If the injected config still points to localhost (common when built without env),
+    // fall back at runtime to use the current page host with port 8080 so remote clients
+    // correctly reach the backend on the same server.
+    let baseApi = config.fabricApiUrl.replace(/\/$/, '');
+    // Normalize to root (remove trailing /api if present) so we can append /patterns
+    let apiRoot = baseApi.replace(/\/api$/i, '');
+
+    try {
+      if (typeof window !== 'undefined') {
+        const parsed = new URL(apiRoot);
+        if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+          // use the public host where the frontend is served, target port 8080 for backend
+          apiRoot = `${window.location.protocol}//${window.location.hostname}:8080`;
+        }
+      }
+    } catch (e) {
+      // ignore URL parse errors and keep apiRoot as-is
+    }
+
+    const url = `${apiRoot}/patterns/${encodeURIComponent(name)}`;
   const response = await fetch(url, {
       method: 'POST',
       headers: {
