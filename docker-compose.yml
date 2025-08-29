@@ -8,4 +8,12 @@ services:
     volumes:
       - ./ENV:/root/.config/fabric/.env:ro
     environment:
-      - GIN_MODE=release 
+      - GIN_MODE=release
+
+  agno:
+    build: ./services/agno_service
+    ports: ["9000:9000"]
+    env_file: ./services/agno_service/.env
+    volumes:
+      - ./services/agno_service:/app
+    restart: unless-stopped 

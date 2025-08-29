@@ -33,6 +33,7 @@
     { href: '/', label: 'Home' },
     { href: '/posts', label: 'Posts' },
     { href: '/chat', label: 'Chat' },
+    { href: '/orchestrate', label: 'PPT Generator' },
     { href: '/contact', label: 'Contact' },
     { href: '/about', label: 'About' },
   ];

@@ -56,6 +56,20 @@ export default defineConfig({
           });
         }
       },
+      '/agents': {
+        target: FABRIC_BASE_URL,
+        changeOrigin: true,
+        timeout: 30000,
+        configure: (proxy, _options) => {
+          proxy.on('error', (err, req, res) => {
+            console.log('proxy error', err);
+            res.writeHead(500, {
+              'Content-Type': 'application/json',
+            });
+            res.end(JSON.stringify({ error: 'Backend server not running' }));
+          });
+        }
+      },
       '^/(patterns|models|sessions)/names': {
         target: FABRIC_BASE_URL,
         changeOrigin: true,

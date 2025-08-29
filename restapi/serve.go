@@ -33,6 +33,10 @@ func Serve(registry *core.PluginRegistry, address string, apiKey string) (err er
 	NewModelsHandler(r, registry.VendorManager)
 	NewStrategiesHandler(r)
 
+	// Agents routes for Agno service
+	r.POST("/agents/orchestrate", OrchestrateHandler())
+	r.GET("/agents/files/output.pptx", FileProxyHandler())
+
 	// Start server
 	err = r.Run(address)
 	if err != nil {
