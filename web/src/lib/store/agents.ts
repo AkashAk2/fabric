@@ -1,6 +1,7 @@
 export async function startOrchestrate(topic: string, criteria: string[], context?: string) {
   const criteriaChunk = criteria.join(", ");
-  const res = await fetch("/agents/orchestrate", {
+  // Use streaming start endpoint so client can receive logs via SSE
+  const res = await fetch("/agents/generate-stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -14,12 +15,15 @@ export async function startOrchestrate(topic: string, criteria: string[], contex
     throw new Error(errorData.detail?.message || `orchestrate failed: ${res.status}`);
   }
   const data = await res.json();
-  if (!data.success) {
-    throw new Error("PPT generation failed: " + JSON.stringify(data.qc_results));
-  }
   return data;
 }
 
 export function fileUrl() {
   return `/agents/files/output.pptx`;
+}
+
+export function makeRunEventSource(runId: string) {
+  // Fabric proxies /agents/runs/{id}/stream -> Agno
+  const url = `/agents/runs/${runId}/stream`;
+  return new EventSource(url);
 }

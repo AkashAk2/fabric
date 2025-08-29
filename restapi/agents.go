@@ -1,3 +1,5 @@
+
+
 package restapi
 
 import (
@@ -7,6 +9,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// OrchestrateStreamHandler proxies POST /agents/generate-stream to POST /generate-stream
+func OrchestrateStreamHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		 c.Request.URL.Path = "/generate-stream"
+		 c.Request.Host = "127.0.0.1:9000"
+		 agnoProxy().ServeHTTP(c.Writer, c.Request)
+	}
+}
 
 // agnoProxy creates a reverse proxy to the Agno service
 func agnoProxy() *httputil.ReverseProxy {
@@ -32,7 +43,8 @@ func RunStreamHandler() gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "run id required"})
 			return
 		}
-		c.Request.URL.Path = "/v1/runs/" + runID + "/stream"
+	// Agno exposes /runs/{id}/stream
+	c.Request.URL.Path = "/runs/" + runID + "/stream"
 		c.Request.Host = "127.0.0.1:9000"
 		// Set headers for SSE
 		c.Writer.Header().Set("Cache-Control", "no-cache")

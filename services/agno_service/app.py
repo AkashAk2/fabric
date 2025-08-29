@@ -1,8 +1,9 @@
-import os, json, re
+import os, json, re, uuid, asyncio
 from dotenv import load_dotenv
 from pptx import Presentation
 from pptx.util import Pt
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from fastapi.responses import FileResponse
@@ -97,8 +98,9 @@ def validate_ppt(file_path):
 
 def quality_check_agent(plan, ppt_file, criteria_list):
     agent = make_agent()
-    plan_summary = "\n".join([f"Slide: {s['title']}\nBullets: {', '.join(s['bullets'])}" for s in plan])
-    criteria_str = "\n".join([f"- {c}" for c in criteria_list])
+    # Prepare plan summary and criteria string
+    plan_summary = json.dumps(plan, indent=2)
+    criteria_str = "\n".join(f"- {c}" for c in criteria_list)
     prompt = f"""
 You are a quality check agent for PowerPoint presentations. Here is the plan:
 {plan_summary}
@@ -159,6 +161,156 @@ class GenerateRequest(BaseModel):
     agent_context: Optional[str] = None
     criteria_chunk: Optional[str] = None
 
+
+
+# Simple in-memory run manager for SSE streaming and run state
+run_queues: dict = {}
+run_states: dict = {}  # run_id -> dict with keys: criteria_list, skipped_criteria
+
+
+async def _sse_event_generator(run_id: str):
+    q: asyncio.Queue = run_queues.get(run_id)
+    if q is None:
+        # immediate close
+        yield b""
+        return
+    try:
+        while True:
+            item = await q.get()
+            # item should be a dict; send as JSON string
+            payload = json.dumps(item, default=str)
+            yield f"data: {payload}\n\n".encode("utf-8")
+            if item.get("type") == "done":
+                break
+    finally:
+        # cleanup
+        run_queues.pop(run_id, None)
+
+
+
+async def _run_and_emit(run_id: str, req: GenerateRequest):
+    q: asyncio.Queue = run_queues.get(run_id)
+    if q is None:
+        return
+    await q.put({"type": "log", "message": "Run started"})
+    max_attempts = 5
+    plan = None
+    ppt_file = None
+    failed_criteria = []
+    qc_results = []
+    improvement_instructions = None
+    # Parse criteria and skipped criteria from run_states
+    state = run_states.get(run_id)
+    if state is not None:
+        criteria_list = state.get("criteria_list", [])
+        skipped_criteria = set(state.get("skipped_criteria", []))
+    else:
+        if req.criteria_chunk:
+            criteria_list = [c.strip() for c in req.criteria_chunk.split(",") if c.strip()]
+        else:
+            criteria_list = [
+                "At least 6 slides",
+                "Each slide has a title",
+                "Each slide has at least 2 bullets",
+                "No slide has more than 5 bullets",
+            ]
+        skipped_criteria = set()
+        run_states[run_id] = {"criteria_list": criteria_list, "skipped_criteria": list(skipped_criteria)}
+    for attempt in range(1, max_attempts + 1):
+        try:
+            await q.put({"type": "log", "message": f"Attempt {attempt}..."})
+            # Plan
+            await q.put({"type": "log", "message": "Planning slides..."})
+            plan_json_text = await asyncio.to_thread(plan_ppt, req.topic, improvement_instructions, plan, req.agent_context)
+            try:
+                plan = json.loads(plan_json_text)
+                await q.put({"type": "log", "message": f"Plan created: {len(plan)} slides"})
+            except Exception as e:
+                await q.put({"type": "log", "message": f"Planning failed: {e}"})
+                continue
+            ok, _ = verify_ppt(plan)
+            if not ok:
+                await q.put({"type": "log", "message": "Plan verification failed."})
+                continue
+            # Execute
+            await q.put({"type": "log", "message": "Rendering PPTX..."})
+            try:
+                ppt_file = await asyncio.to_thread(execute_ppt, plan)
+                await q.put({"type": "log", "message": f"PPT saved: {ppt_file}"})
+            except Exception as e:
+                await q.put({"type": "log", "message": f"PPT generation failed: {e}"})
+                continue
+            valid, _ = validate_ppt(ppt_file)
+            if not valid:
+                await q.put({"type": "log", "message": "PPT validation failed."})
+                continue
+            # Quality check
+            await q.put({"type": "log", "message": "Running quality checks..."})
+            # Only check criteria that are not skipped
+            active_criteria = [c for c in criteria_list if c not in skipped_criteria]
+            qc_results = await asyncio.to_thread(quality_check_agent, plan, ppt_file, active_criteria)
+            for r in qc_results:
+                await q.put({"type": "qc", "criterion": r.get("criterion"), "result": r.get("result"), "reason": r.get("reason")})
+            failed = [r for r in qc_results if r.get("result", "").upper() != "PASS"]
+            if not failed:
+                await q.put({"type": "log", "message": "All quality checks passed."})
+                await q.put({"type": "done", "success": True, "ppt_file": ppt_file, "qc_results": qc_results})
+                run_states.pop(run_id, None)
+                return
+            else:
+                await q.put({"type": "log", "message": f"Quality checks found {len(failed)} failures."})
+                # Pass failed criteria and reasons to LLM as improvement_instructions
+                improvement_instructions = "; ".join([f"{r['criterion']}: {r['reason']}" for r in failed])
+        except Exception as e:
+            await q.put({"type": "log", "message": f"Error in attempt {attempt}: {e}"})
+            continue
+    # If we reach here, all attempts failed
+    failed = [r for r in qc_results if r.get("result", "").upper() != "PASS"]
+    if failed:
+        await q.put({
+            "type": "user_input_needed",
+            "message": "Some criteria could not be satisfied after all attempts.",
+            "failed_criteria": [
+                {"criterion": r.get("criterion"), "reason": r.get("reason")} for r in failed
+            ],
+            "qc_results": qc_results,
+            "run_id": run_id
+        })
+    else:
+        await q.put({"type": "done", "success": False, "qc_results": qc_results})
+    # Do not remove run_states here; allow resume
+
+
+# Endpoint to continue a run with user input (skip/retry for failed criteria)
+from fastapi import Body
+from fastapi.responses import JSONResponse
+
+class ContinueRunRequest(BaseModel):
+    run_id: str
+    skip_criteria: Optional[List[str]] = None
+
+@app.post("/continue-run")
+async def continue_run(req: ContinueRunRequest):
+    run_id = req.run_id
+    skip_criteria = set(req.skip_criteria or [])
+    state = run_states.get(run_id)
+    if not state:
+        return JSONResponse(status_code=404, content={"error": "run_id not found or already completed"})
+    # Update skipped_criteria
+    prev_skipped = set(state.get("skipped_criteria", []))
+    new_skipped = prev_skipped.union(skip_criteria)
+    state["skipped_criteria"] = list(new_skipped)
+    run_states[run_id] = state
+    # Resume the run
+    req_obj = GenerateRequest(
+        topic="",  # Not used in resume, but required by signature
+        agent_context=None,
+        criteria_chunk=None
+    )
+    asyncio.create_task(_run_and_emit(run_id, req_obj))
+    return {"ok": True, "message": "Run resumed", "run_id": run_id}
+
+
 @app.post("/generate")
 def generate_ppt(req: GenerateRequest):
     topic = req.topic
@@ -190,6 +342,25 @@ Text: {safe_text}
         return {"success": True, "ppt_file": ppt_file, "qc_results": qc_results}
     else:
         raise HTTPException(status_code=500, detail={"success": False, "qc_results": qc_results})
+
+
+
+@app.post("/generate-stream")
+async def generate_ppt_stream(req: GenerateRequest):
+    """Start an orchestrator run and return a run_id. Clients can connect to /runs/{run_id}/stream to receive SSE events."""
+    run_id = str(uuid.uuid4())
+    q: asyncio.Queue = asyncio.Queue()
+    run_queues[run_id] = q
+    # start background task
+    asyncio.create_task(_run_and_emit(run_id, req))
+    return {"run_id": run_id, "stream_url": f"/agents/runs/{run_id}/stream"}
+
+
+@app.get("/runs/{run_id}/stream")
+def run_stream(run_id: str):
+    if run_id not in run_queues:
+        raise HTTPException(status_code=404, detail="run id not found")
+    return StreamingResponse(_sse_event_generator(run_id), media_type='text/event-stream')
 
 @app.get("/download")
 def download_ppt():

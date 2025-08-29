@@ -1,0 +1,6 @@
+Run these commands to start Agno
+cd fabric/services/agno_service && ./run_dev.sh
+
+./fabric --serve
+
+npm run dev -- --host
