@@ -16,6 +16,27 @@ def bool_env(name: str, default=False):
     val = os.environ.get(name, str(default)).strip().lower()
     return val in ("1", "true", "yes", "y")
 
+# Initialize Google/Vertex client from API key if provided, otherwise rely on ADC
+API_KEY = os.getenv("GOOGLE_API_KEY")
+try:
+    # for google-generativeai
+    import google.generativeai as genai  # type: ignore
+    if API_KEY:
+        genai.configure(api_key=API_KEY)
+except Exception:
+    pass
+
+try:
+    # for google-genai (if used in the project)
+    from google import genai as genai2  # type: ignore
+    if API_KEY and genai2 is not None:
+        # Some versions accept environment variable or client init; set env as fallback
+        os.environ["GOOGLE_API_KEY"] = API_KEY
+        # if creating client instances in your code, you may need to pass key there
+except Exception:
+    pass
+
+
 def make_agent() -> Agent:
     model = Gemini(
         id=os.environ.get("DEFAULT_MODEL", "gemini-1.5-flash"),
