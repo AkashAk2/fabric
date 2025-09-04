@@ -17,27 +17,6 @@ def bool_env(name: str, default=False):
     val = os.environ.get(name, str(default)).strip().lower()
     return val in ("1", "true", "yes", "y")
 
-# Initialize Google/Vertex client from API key if provided, otherwise rely on ADC
-API_KEY = os.getenv("GOOGLE_API_KEY")
-try:
-    # for google-generativeai
-    import google.generativeai as genai  # type: ignore
-    if API_KEY:
-        genai.configure(api_key=API_KEY)
-except Exception:
-    pass
-
-try:
-    # for google-genai (if used in the project)
-    from google import genai as genai2  # type: ignore
-    if API_KEY and genai2 is not None:
-        # Some versions accept environment variable or client init; set env as fallback
-        os.environ["GOOGLE_API_KEY"] = API_KEY
-        # if creating client instances in your code, you may need to pass key there
-except Exception:
-    pass
-
-
 def make_agent() -> Agent:
     model = Gemini(
         id=os.environ.get("DEFAULT_MODEL", "gemini-1.5-flash"),
@@ -77,7 +56,7 @@ Constraints:
     resp = agent.run(base_prompt)
     text = getattr(resp, "content", None) or str(resp)
     json_text = extract_json(text)
-    return json_text
+    return {'json_text': json_text, 'prompt': base_prompt, 'response': text}
 
 def execute_ppt(plan):
     prs = Presentation()
@@ -142,7 +121,7 @@ For each criterion, respond with PASS or FAIL and a short reason. Return a JSON 
         results = json.loads(json_text)
     except Exception:
         results = [{"criterion": c, "result": "FAIL", "reason": "Could not parse LLM response."} for c in criteria_list]
-    return results
+    return {'results': results, 'prompt': prompt, 'response': text}
 
 def orchestrate(topic, criteria_list, agent_context=None):
     max_attempts = 5
@@ -154,7 +133,8 @@ def orchestrate(topic, criteria_list, agent_context=None):
     for attempt in range(1, max_attempts + 1):
         if plan is None or any(k in c.lower() for c in failed_criteria for k in ("slide","structure","title","section")):
             improvement_instructions = "; ".join(failed_criteria) if failed_criteria else None
-            plan_json_text = plan_ppt(topic, improvement_instructions=improvement_instructions, prev_plan=plan, agent_context=agent_context)
+            result = plan_ppt(topic, improvement_instructions=improvement_instructions, prev_plan=plan, agent_context=agent_context)
+            plan_json_text = result['json_text']
             try:
                 plan = json.loads(plan_json_text)
             except Exception:
@@ -167,13 +147,14 @@ def orchestrate(topic, criteria_list, agent_context=None):
             valid, _ = validate_ppt(ppt_file)
             if not valid:
                 continue
-        qc_results = quality_check_agent(plan, ppt_file, failed_criteria)
+        qc_result = quality_check_agent(plan, ppt_file, failed_criteria)
+        qc_results = qc_result['results']
         failed_criteria = [r['criterion'] for r in qc_results if r.get('result','FAIL').upper() != 'PASS']
         if not failed_criteria:
-            full = quality_check_agent(plan, ppt_file, criteria_list)
-            return ppt_file, full
-    final_results = quality_check_agent(plan, ppt_file, criteria_list)
-    return None, final_results
+            full_result = quality_check_agent(plan, ppt_file, criteria_list)
+            return ppt_file, full_result['results']
+    final_result = quality_check_agent(plan, ppt_file, criteria_list)
+    return None, final_result['results']
 
 app = FastAPI(title="Multi-Agent PPT Playground")
 
@@ -242,7 +223,10 @@ async def _run_and_emit(run_id: str, req: GenerateRequest):
             await q.put({"type": "log", "message": f"Attempt {attempt}..."})
             # Plan
             await q.put({"type": "log", "message": "Planning slides..."})
-            plan_json_text = await asyncio.to_thread(plan_ppt, req.topic, improvement_instructions, plan, req.agent_context)
+            result = await asyncio.to_thread(plan_ppt, req.topic, improvement_instructions, plan, req.agent_context)
+            plan_json_text = result['json_text']
+            await q.put({"type": "log", "message": f"LLM Prompt sent: {result['prompt'][:500]}..."})
+            await q.put({"type": "log", "message": f"LLM Response received: {result['response'][:500]}..."})
             try:
                 plan = json.loads(plan_json_text)
                 await q.put({"type": "log", "message": f"Plan created: {len(plan)} slides"})
@@ -269,7 +253,10 @@ async def _run_and_emit(run_id: str, req: GenerateRequest):
             await q.put({"type": "log", "message": "Running quality checks..."})
             # Only check criteria that are not skipped
             active_criteria = [c for c in criteria_list if c not in skipped_criteria]
-            qc_results = await asyncio.to_thread(quality_check_agent, plan, ppt_file, active_criteria)
+            qc_result = await asyncio.to_thread(quality_check_agent, plan, ppt_file, active_criteria)
+            qc_results = qc_result['results']
+            await q.put({"type": "log", "message": f"QC LLM Prompt sent: {qc_result['prompt'][:500]}..."})
+            await q.put({"type": "log", "message": f"QC LLM Response received: {qc_result['response'][:500]}..."})
             for r in qc_results:
                 await q.put({"type": "qc", "criterion": r.get("criterion"), "result": r.get("result"), "reason": r.get("reason")})
             failed = [r for r in qc_results if r.get("result", "").upper() != "PASS"]
