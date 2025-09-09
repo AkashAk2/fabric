@@ -59,8 +59,17 @@ export default defineConfig({
       '/agents': {
         target: FABRIC_BASE_URL,
         changeOrigin: true,
-        timeout: 30000,
+        // Disable proxy timeouts for long-lived SSE
+        timeout: 0,
+        proxyTimeout: 0,
         configure: (proxy, _options) => {
+          // Strip compression & force keep-alive for SSE
+          proxy.on('proxyReq', (proxyReq, req, res) => {
+            try {
+              proxyReq.removeHeader?.('accept-encoding');
+            } catch {}
+            proxyReq.setHeader('connection', 'keep-alive');
+          });
           proxy.on('error', (err, req, res) => {
             console.log('proxy error', err);
             res.writeHead(500, {

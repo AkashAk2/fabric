@@ -19,7 +19,8 @@ export async function startOrchestrate(topic: string, criteria: string[], contex
 }
 
 export function fileUrl() {
-  return `/agents/files/output.pptx`;
+  // FastAPI exposes /download; Gin proxies it under /agents
+  return `/agents/download`;
 }
 
 export function makeRunEventSource(runId: string) {

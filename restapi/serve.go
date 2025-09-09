@@ -36,6 +36,7 @@ func Serve(registry *core.PluginRegistry, address string, apiKey string) (err er
 	// Agents routes for Agno service
 	r.POST("/agents/orchestrate", OrchestrateHandler())
 	r.GET("/agents/files/output.pptx", FileProxyHandler())
+	r.GET("/agents/download", FileProxyHandler())
 	// Streaming orchestration and logs
 	r.POST("/agents/generate-stream", OrchestrateStreamHandler())
 	r.GET("/agents/runs/:id/stream", RunStreamHandler())
