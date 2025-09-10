@@ -188,10 +188,20 @@ async def run_pipeline(state: OrchestratorState, sse_queue: Optional[asyncio.Que
             })
             
         state.plan = await fix_plan(state.plan, [f.dict() for f in failures], sse_queue=sse_queue)
+        # Force asset regeneration on next attempt (plan changed)
+        state.assets = None
         if sse_queue:
             await sse_queue.put({
                 "type": "stage", "name": "fix", "status": "DONE", "attempt": attempt,
                 "message": f"Fix attempt {attempt} completed. Revised plan has {len(state.plan.slides)} slides."
             })
 
-    raise RuntimeError("Quality gates not satisfied after retries")
+    # If we reach here, all attempts failed QC, but return the state anyway 
+    # so the user can still download the PPT (as requested)
+    if sse_queue:
+        await sse_queue.put({
+            "type": "stage", "name": "complete", "status": "FAIL", "attempt": MAX_ATTEMPTS,
+            "message": f"Presentation completed with QC failures after {MAX_ATTEMPTS} attempt(s). PPT available for download.",
+            "final_failures": len(failures)
+        })
+    return state

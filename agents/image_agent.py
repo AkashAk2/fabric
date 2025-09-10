@@ -35,6 +35,14 @@ async def plan_images(plan: Plan, style: StyleHints, sse_queue=None) -> AssetMan
         try:
             manifest_json = extract_json_string(out.content)
             manifest = AssetManifest.model_validate_json(manifest_json)
+            # Ensure every image has alt_text; default to slide title
+            for it in manifest.images:
+                if not (it.alt_text and it.alt_text.strip()):
+                    idx = it.slide_index if isinstance(it.slide_index, int) else -1
+                    if 0 <= idx < len(plan.slides):
+                        it.alt_text = plan.slides[idx].title
+                    else:
+                        it.alt_text = ""
             if sse_queue:
                 try:
                     first = manifest.images[0] if manifest.images else None

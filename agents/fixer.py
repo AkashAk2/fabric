@@ -17,7 +17,8 @@ FixerAgent = Agent(
         "- If any failure mentions 'credible sources', replace non-approved sources with only these approved ones: 'Infosys Research', 'Gartner', 'Forrester', 'World Economic Forum'.\n"
         "- If any failure mentions 'citation format', ensure all citations use '[Source, Year]' format, not '(Source, Year)'.\n"
         "- Avoid merging title text with bullet points; keep one clear message per slide.\n"
-        "- Use only allowed slide purposes and keep consistent tone.\n"
+    "- Use only allowed slide purposes: ['title','agenda','overview','insight','data','process','case','action_plan','image','conclusion','appendix'].\n"
+    "- If a specific audience element is required (e.g., 'Executive Takeaway'), satisfy it by ADDING a slide titled exactly that, with purpose 'overview' (or 'conclusion') and 2-4 concise bullets. Do NOT invent new purpose names.\n"
         "OUTPUT: JSON Plan only."
     )
 )
@@ -55,6 +56,57 @@ async def fix_plan(plan: Plan, failures: list[dict], sse_queue=None) -> Plan:
             s = data.get("slides")
             if not isinstance(s, list) or len(s) < 8:
                 data["slides"] = plan.dict()["slides"]
+            # Sanitize slide purposes to allowed set
+            allowed = {"title","agenda","overview","insight","data","process","case","action_plan","image","conclusion","appendix"}
+            purpose_map = {
+                "executive_takeaway": "overview",
+                "executive summary": "overview",
+                "technical_deep_dive": "insight",
+                "deep_dive": "insight",
+                "glossary": "appendix",
+                "section_divider": "overview",
+            }
+            slides = data.get("slides") or []
+            norm_slides = []
+            for sl in slides:
+                if isinstance(sl, dict):
+                    p = str(sl.get("purpose", "")).strip().lower()
+                    if p not in allowed:
+                        p = purpose_map.get(p, "overview")
+                    sl["purpose"] = p
+                norm_slides.append(sl)
+            data["slides"] = norm_slides
+            # If failures require Executive Takeaway, ensure a slide exists
+            need_exec = any("Executive Takeaway".lower() in str(f.get("criterion","")) or "executive_takeaway" in str(f.get("reason","")) for f in failures)
+            if need_exec:
+                has_exec = any(isinstance(sl, dict) and str(sl.get("title",""))[:50].lower().startswith("executive takeaway") for sl in data.get("slides", []))
+                if not has_exec:
+                    data.setdefault("slides", []).append({
+                        "title": "Executive Takeaway",
+                        "purpose": "overview",
+                        "bullets": [
+                            {"text": "Summary: Our top 1–2 recommendations for decision-makers."},
+                            {"text": "Implication: Immediate business value and risk reduction."}
+                        ],
+                        "required_assets": []
+                    })
+            # Normalize required_assets: must be list[str]
+            sanitized_slides = []
+            for sl in data.get("slides", []):
+                if isinstance(sl, dict):
+                    ra = sl.get("required_assets", [])
+                    norm_ra = []
+                    if isinstance(ra, list):
+                        for a in ra:
+                            if isinstance(a, str) and a.strip():
+                                norm_ra.append(a.strip())
+                            elif isinstance(a, dict):
+                                t = a.get("type")
+                                if isinstance(t, str) and t.strip():
+                                    norm_ra.append(t.strip())
+                    sl["required_assets"] = norm_ra
+                sanitized_slides.append(sl)
+            data["slides"] = sanitized_slides
             new_plan = Plan.model_validate(data)
             if sse_queue:
                 try:

@@ -43,7 +43,11 @@ def verify_pptx(path: str, plan: Plan, style: StyleHints, guidelines: dict) -> L
         # bullets (best-effort)
         bullets = 0
         for sh in slide.shapes:
-            if not getattr(sh, "has_text_frame", False): continue
+            if sh == slide.shapes.title:
+                # Do not count title text as bullets
+                continue
+            if not getattr(sh, "has_text_frame", False):
+                continue
             tf = sh.text_frame
             for p in tf.paragraphs:
                 txt = (p.text or "").strip()
@@ -81,5 +85,11 @@ def extract_ppt_facts(path: str) -> dict:
     facts = {"slides":[]}
     for i, s in enumerate(prs.slides):
         pics = [x for x in s.shapes if x.shape_type == MSO_SHAPE_TYPE.PICTURE]
-        facts["slides"].append({"index": i, "title": (s.shapes.title.text.strip() if s.shapes.title else ""), "picture_count": len(pics)})
+        alt_missing = sum(1 for x in pics if not (getattr(x, "alternative_text", "") or "").strip())
+        facts["slides"].append({
+            "index": i,
+            "title": (s.shapes.title.text.strip() if s.shapes.title else ""),
+            "picture_count": len(pics),
+            "pictures_missing_alt": alt_missing
+        })
     return facts

@@ -390,10 +390,19 @@ def realize_manifest(
     on_progress: Optional[callable] = None,
 ):
     backend = backend or make_backend()
+    # Use absolute, predictable asset directory under services/agno_service
+    try:
+        base_dir = os.path.join(os.path.dirname(__file__), "..", "services", "agno_service", "assets")
+        asset_dir = os.path.abspath(base_dir)
+    except Exception:
+        asset_dir = os.path.abspath(asset_dir)
     os.makedirs(asset_dir, exist_ok=True)
     for idx, it in enumerate(manifest.images):
         t0 = time.time()
-        out_path = os.path.join(asset_dir, f"slide_{it.slide_index}.png")
+        # Ensure unique filenames even if slide_index repeats; keep slide-index visible for traceability
+        safe_idx = int(idx)
+        safe_slide = int(getattr(it, "slide_index", safe_idx) or safe_idx)
+        out_path = os.path.join(asset_dir, f"slide_{safe_slide}_{safe_idx}.png")
         it.path = backend.generate(it.prompt, out_path)
         if on_progress:
             try:
