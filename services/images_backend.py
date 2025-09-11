@@ -397,6 +397,20 @@ def realize_manifest(
     except Exception:
         asset_dir = os.path.abspath(asset_dir)
     os.makedirs(asset_dir, exist_ok=True)
+    # Clear existing images when starting a new generation (opt-out with ASSETS_CLEAR_ON_START=0)
+    if (os.getenv("ASSETS_CLEAR_ON_START", "1") not in ("0", "false", "False", "no")):
+        try:
+            for name in os.listdir(asset_dir):
+                fn = os.path.join(asset_dir, name)
+                if not os.path.isfile(fn):
+                    continue
+                if any(name.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp")):
+                    try:
+                        os.remove(fn)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
     for idx, it in enumerate(manifest.images):
         t0 = time.time()
         # Ensure unique filenames even if slide_index repeats; keep slide-index visible for traceability

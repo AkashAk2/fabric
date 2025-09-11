@@ -10,6 +10,7 @@ except Exception:
     PILImage = None
 from pptx.enum.shapes import PP_PLACEHOLDER_TYPE
 from models.contracts import Plan, StyleHints, AssetManifest
+from collections import defaultdict, deque
 from services.guidelines import load_guideline_profile
 
 class PPTExecutor:
@@ -145,6 +146,43 @@ class PPTExecutor:
         margin_in = px_to_inches(g["visual_rules"].get("margins_min_px", 60)) if g else 0.625
         gap_in = margin_in * 0.5
         title_h_in = 1.0
+
+        # Build an index of images by slide and a pool of remaining images
+        images_by_slide = defaultdict(list)
+        remaining = deque()
+        try:
+            for im in (assets.images or []):
+                try:
+                    idx = int(getattr(im, 'slide_index', -1))
+                except Exception:
+                    idx = -1
+                if idx >= 0:
+                    images_by_slide[idx].append(im)
+                remaining.append(im)
+        except Exception:
+            pass
+        used_ids = set()
+
+        def take_image_for_slide(slide_idx: int):
+            # Prefer exact match, else first unused remaining
+            # Also ensure file exists
+            arr = images_by_slide.get(slide_idx) or []
+            while arr:
+                im = arr.pop(0)
+                if id(im) in used_ids:
+                    continue
+                if getattr(im, 'path', None) and os.path.exists(im.path):
+                    used_ids.add(id(im))
+                    return im
+            # fallback
+            while remaining:
+                im = remaining.popleft()
+                if id(im) in used_ids:
+                    continue
+                if getattr(im, 'path', None) and os.path.exists(im.path):
+                    used_ids.add(id(im))
+                    return im
+            return None
 
         for i, s in enumerate(plan.slides):
             layout_name = style.slide_layouts.get(i) or {
@@ -483,13 +521,13 @@ class PPTExecutor:
                         except:
                             pass
 
-            # Image placement + alt text (right column), only if plan requires it
+            # Image placement + alt text (right column)
             requires_image = any(
                 isinstance(a, str) and (a.startswith("image:") or a.startswith("diagram:"))
                 for a in (s.required_assets or [])
             )
-            img = next((im for im in assets.images if im.slide_index == i), None)
-            if requires_image and img and os.path.exists(img.path):
+            img = take_image_for_slide(i)
+            if img and getattr(img, 'path', None) and os.path.exists(img.path):
                 # Try picture placeholder first
                 pic_ph = next((ph for ph in slide.placeholders
                                if getattr(ph, "placeholder_format", None) and ph.placeholder_format.type == PP_PLACEHOLDER_TYPE.PICTURE), None)
@@ -497,6 +535,15 @@ class PPTExecutor:
                 if pic_ph:
                     try:
                         picture = pic_ph.insert_picture(img.path)
+                        # Reposition placeholder to right column bounds if possible
+                        try:
+                            shp = getattr(picture, 'shape', None) or getattr(pic_ph, 'shape', None) or pic_ph
+                            shp.left = right_left
+                            shp.top = content_top
+                            shp.width = Inches(right_col_w_in)
+                            shp.height = content_height
+                        except Exception:
+                            pass
                     except Exception:
                         picture = None
                 if picture is None:
@@ -532,8 +579,11 @@ class PPTExecutor:
                         picture = None
                 if picture is not None:
                     # Ensure alt text is set properly - use image alt_text or slide title as fallback
-                    alt_text = img.alt_text or s.title or f"Image for slide {i+1}"
-                    picture.alternative_text = alt_text
+                    try:
+                        alt_text = img.alt_text or s.title or f"Image for slide {i+1}"
+                        picture.alternative_text = alt_text
+                    except Exception:
+                        pass
                 else:
                     # As a last resort, try adding at right column without sizing
                     try:
@@ -542,6 +592,7 @@ class PPTExecutor:
                         picture.alternative_text = alt_text
                     except Exception:
                         pass
+            # If the plan requires an image but none was available/inserted, leave for QC to report
 
         print(f"DEBUG: Saving presentation to {out_path}")
         prs.save(out_path)

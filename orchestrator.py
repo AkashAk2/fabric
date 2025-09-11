@@ -71,6 +71,35 @@ async def run_pipeline(state: OrchestratorState, sse_queue: Optional[asyncio.Que
                 await sse_queue.put({"type": "stage", "name": "images", "status": "RUNNING", "message": "Planning and generating images for slides"})
             try:
                 manifest = await plan_images(state.plan, state.style, sse_queue=sse_queue)
+                # Normalize and uniquify prompts/alt_text per slide for distinct, relevant images
+                used_prompts = set()
+                for it in manifest.images:
+                    # Ensure slide index is valid
+                    try:
+                        if it.slide_index < 0 or it.slide_index >= len(state.plan.slides):
+                            it.slide_index = min(max(it.slide_index, 0), len(state.plan.slides) - 1)
+                    except Exception:
+                        it.slide_index = 0
+                    sl = state.plan.slides[it.slide_index]
+                    # Compose a more specific, slide-aware prompt
+                    key_points = ", ".join(b.text for b in sl.bullets[:2])
+                    base = f"{state.topic}: {sl.title}. Depict: {key_points}. Style: {state.style.image_style}."
+                    prompt = (it.prompt or "").strip()
+                    if prompt:
+                        combined = f"{prompt} | Slide {it.slide_index+1}: {sl.title}. Focus: {key_points}"
+                    else:
+                        combined = base
+                    # Deduplicate prompts by adding a unique suffix if needed
+                    if combined in used_prompts:
+                        variant = 2
+                        while f"{combined} (variant {variant})" in used_prompts:
+                            variant += 1
+                        combined = f"{combined} (variant {variant})"
+                    used_prompts.add(combined)
+                    it.prompt = combined
+                    # Ensure alt text
+                    if not (it.alt_text and it.alt_text.strip()):
+                        it.alt_text = sl.title
                 # Backfill: ensure images for slides that require them
                 want_image_idx = {i for i, sl in enumerate(state.plan.slides) if any((isinstance(a, str) and a.startswith("image:")) for a in sl.required_assets)}
                 have_image_idx = {it.slide_index for it in manifest.images}
@@ -78,7 +107,14 @@ async def run_pipeline(state: OrchestratorState, sse_queue: Optional[asyncio.Que
                 for i in missing:
                     sl = state.plan.slides[i]
                     prompt = f"{state.topic}: {sl.title}. Depict key idea: {', '.join(b.text for b in sl.bullets[:2])}. Style: {state.style.image_style}."
-                    manifest.images.append(ImageItem(slide_index=i, prompt=prompt, alt_text=sl.title))
+                    # Make backfilled prompt unique as well
+                    suffix_n = 1
+                    uniq_prompt = f"{prompt} | Slide {i+1}: {sl.title}"
+                    while uniq_prompt in used_prompts:
+                        suffix_n += 1
+                        uniq_prompt = f"{prompt} | Slide {i+1}: {sl.title} (variant {suffix_n})"
+                    used_prompts.add(uniq_prompt)
+                    manifest.images.append(ImageItem(slide_index=i, prompt=uniq_prompt, alt_text=sl.title))
                 
                 if sse_queue:
                     image_summary = []
