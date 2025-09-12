@@ -2,7 +2,7 @@ package restapi
 
 import (
 	"os"
-
+	"strings"
 	"github.com/gin-gonic/gin"
 )
 
@@ -22,7 +22,20 @@ func CORSMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		c.Writer.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		origin := c.GetHeader("Origin")
+		finalOrigin := allowedOrigin
+		// If wildcard but credentials requested, echo the request origin (per spec, '*' + credentials invalid)
+		if allowedOrigin == "*" && origin != "" {
+			finalOrigin = origin
+		}
+		// Prevent multiple comma-separated values; take first if a list slipped in
+		if strings.Contains(finalOrigin, ",") {
+			parts := strings.Split(finalOrigin, ",")
+			if len(parts) > 0 {
+				finalOrigin = strings.TrimSpace(parts[0])
+			}
+		}
+		c.Writer.Header().Set("Access-Control-Allow-Origin", finalOrigin)
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
