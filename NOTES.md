@@ -31,3 +31,38 @@
 - if user gives the ollama url on command line, we need to update/init an ollama vendor.
 - The db should host only things related to access and storage in ~/.config/fabric
 - The interaction part of the Setup function should be in the cli (and perhaps all the Setup)
+
+### CORS / Duplicate Access-Control-Allow-Origin
+
+If the browser reports: `The 'Access-Control-Allow-Origin' header contains multiple values 'http://host:port, http://host:port', but only one is allowed.`
+
+Common causes:
+1. Both the application CORS middleware and a reverse proxy (e.g., Nginx) add the header.
+2. Proxy injects it twice (multiple `add_header` directives or overlapping blocks).
+3. `FABRIC_ALLOW_ORIGIN` contains a comma-separated list.
+
+Mitigations implemented in app:
+* Middleware skips setting header if one already exists (proxy-owned scenario).
+* Multi-value header is sanitized to the first value; warning logged with `slog`.
+* `DISABLE_APP_CORS=true` fully disables middleware (use when proxy handles CORS entirely).
+* `ENABLE_CORS=true` must be set (and `DISABLE_APP_CORS` not true) for app CORS to run.
+
+Recommended deployment patterns:
+* App handles CORS: set `ENABLE_CORS=true`; omit CORS headers in Nginx.
+* Proxy handles CORS: set `DISABLE_APP_CORS=true`; configure Nginx to emit a single origin header.
+
+Nginx example (proxy-managed CORS):
+```
+proxy_hide_header Access-Control-Allow-Origin;
+add_header Access-Control-Allow-Origin $http_origin always;
+add_header Access-Control-Allow-Credentials true always;
+add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With" always;
+add_header Access-Control-Allow-Methods "GET,POST,PUT,DELETE,OPTIONS" always;
+if ($request_method = OPTIONS) { return 204; }
+```
+
+Verification:
+```
+curl -i -H "Origin: http://HOST:5173" http://HOST/patterns/<pattern_name> | grep -i access-control-allow-origin
+```
+You should see exactly one line.
