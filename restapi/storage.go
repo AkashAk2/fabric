@@ -97,5 +97,6 @@ func (h *StorageHandler[T]) Save(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, err.Error())
 		return
 	}
-	c.Status(http.StatusOK)
+	// Respond with a minimal JSON payload for frontend consistency
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "name": name})
 }
